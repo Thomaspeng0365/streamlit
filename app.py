@@ -1,122 +1,84 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
-import plotly.express as px
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score
+from sklearn.datasets import load_iris
 
-# 設定頁面標題和佈局
-st.set_page_config(
-    page_title="酷炫客戶互動儀表板",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+# 設定頁面標題
+st.set_page_config(page_title="互動式機器學習應用", layout="wide")
 
-# --- 儀表板數據生成 ---
+st.title("鳶尾花分類器 🌸")
+st.markdown("使用左側欄調整模型參數，並在右側欄輸入新數據進行預測。")
+
+# --- 數據載入 ---
 @st.cache_data
-def generate_data():
-    """生成虛擬客戶數據，並快取以提高效能"""
-    np.random.seed(42)
-    data = {
-        '客戶ID': range(1, 1001),
-        '年齡': np.random.randint(18, 65, 1000),
-        '性別': np.random.choice(['男', '女', '未知'], 1000, p=[0.45, 0.45, 0.1]),
-        '地區': np.random.choice(['北部', '中部', '南部', '東部'], 1000, p=[0.5, 0.2, 0.2, 0.1]),
-        '購買金額': np.random.randint(100, 10000, 1000),
-        '購買日期': pd.to_datetime(pd.date_range('2023-01-01', periods=1000, freq='D'))
-    }
-    return pd.DataFrame(data)
+def load_data():
+    """載入鳶尾花數據集並轉換為 DataFrame"""
+    iris = load_iris()
+    df = pd.DataFrame(data=iris.data, columns=iris.feature_names)
+    df['target'] = iris.target
+    df['target_names'] = pd.Series(iris.target).map({0: 'setosa', 1: 'versicolor', 2: 'virginica'})
+    return df, iris.target_names
 
-df = generate_data()
+df, target_names = load_data()
 
-# --- 側邊欄篩選器 ---
-st.sidebar.header('數據篩選')
-
-# 年齡滑桿
-min_age, max_age = st.sidebar.slider(
-    '選擇年齡區間',
-    int(df['年齡'].min()),
-    int(df['年齡'].max()),
-    (int(df['年齡'].min()), int(df['年齡'].max()))
+# --- 側邊欄：模型參數調整 ---
+st.sidebar.header('模型參數調整')
+n_estimators = st.sidebar.slider(
+    '樹的數量 (n_estimators)', 1, 100, 10,
+    help="隨機森林模型中決策樹的數量。值越大，模型通常越精準，但訓練時間越長。"
+)
+max_depth = st.sidebar.slider(
+    '樹的最大深度 (max_depth)', 1, 20, 5,
+    help="決策樹的最大深度。控制模型複雜度，避免過度擬合 (Overfitting)。"
 )
 
-# 性別多選框
-selected_genders = st.sidebar.multiselect(
-    '選擇性別',
-    options=df['性別'].unique(),
-    default=df['性別'].unique()
-)
+# --- 數據集分割與模型訓練 ---
+X = df.drop(['target', 'target_names'], axis=1)
+y = df['target']
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-# 地區下拉選單
-selected_region = st.sidebar.selectbox(
-    '選擇地區',
-    options=['全部'] + list(df['地區'].unique())
-)
+@st.cache_resource
+def train_model(n_estimators, max_depth):
+    """訓練隨機森林模型並快取"""
+    model = RandomForestClassifier(n_estimators=n_estimators, max_depth=max_depth, random_state=42)
+    model.fit(X_train, y_train)
+    return model
 
-# 根據篩選條件過濾數據
-filtered_df = df[(df['年齡'] >= min_age) & (df['年齡'] <= max_age)]
-if selected_genders:
-    filtered_df = filtered_df[filtered_df['性別'].isin(selected_genders)]
-if selected_region != '全部':
-    filtered_df = filtered_df[filtered_df['地區'] == selected_region]
+model = train_model(n_estimators, max_depth)
 
-# --- 儀表板主內容 ---
-st.title("客戶數據互動儀表板 📊")
-st.markdown("使用左側欄的篩選器來探索數據！")
+# --- 主內容：模型評估 ---
+st.subheader('模型評估')
 
-if filtered_df.empty:
-    st.warning("沒有符合篩選條件的數據，請調整篩選器。")
-else:
-    # --- 儀表板卡片 (KPI) ---
-    total_sales = int(filtered_df['購買金額'].sum())
-    average_age = int(filtered_df['年齡'].mean())
-    customer_count = filtered_df.shape[0]
+# 進行預測
+y_pred = model.predict(X_test)
+accuracy = accuracy_score(y_test, y_pred)
 
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.info(f"**總購買金額**\n\n$ {total_sales:,}", icon="💰")
-    with col2:
-        st.info(f"**平均客戶年齡**\n\n{average_age} 歲", icon="👤")
-    with col3:
-        st.info(f"**總客戶數**\n\n{customer_count} 人", icon="👥")
-    
-    st.markdown("---")
-    
-    # --- 圖表區塊 ---
-    st.subheader('數據可視化')
-    
-    # 購買金額直方圖 (Histogram)
-    fig_hist = px.histogram(
-        filtered_df,
-        x='購買金額',
-        nbins=50,
-        title='購買金額分佈',
-        color_discrete_sequence=px.colors.qualitative.Plotly
-    )
-    st.plotly_chart(fig_hist, use_container_width=True)
+st.success(f"模型精準度：**{accuracy:.2f}**")
 
-    # 年齡與購買金額散點圖 (Scatter Plot)
-    fig_scatter = px.scatter(
-        filtered_df,
-        x='年齡',
-        y='購買金額',
-        color='性別',
-        hover_name='客戶ID',
-        title='年齡與購買金額關係',
-        color_discrete_map={'男': 'blue', '女': 'pink', '未知': 'gray'}
-    )
-    st.plotly_chart(fig_scatter, use_container_width=True)
+st.info("改變左側欄的參數，可以觀察模型精準度的變化！")
 
-    # 地區銷售圓餅圖 (Pie Chart)
-    sales_by_region = filtered_df.groupby('地區')['購買金額'].sum().reset_index()
-    fig_pie = px.pie(
-        sales_by_region,
-        values='購買金額',
-        names='地區',
-        title='各地區總購買金額',
-        hole=0.3
-    )
-    st.plotly_chart(fig_pie, use_container_width=True)
+# --- 數據輸入與預測 ---
+st.markdown("---")
+st.subheader('輸入數據進行預測')
 
-    # --- 原始數據區塊 ---
-    st.markdown("---")
-    st.subheader('原始數據預覽')
-    st.dataframe(filtered_df.head(10))
+# 建立四個輸入滑桿
+col1, col2 = st.columns(2)
+with col1:
+    sepal_length = st.slider("花萼長度 (cm)", float(X['sepal length (cm)'].min()), float(X['sepal length (cm)'].max()), 5.4)
+    sepal_width = st.slider("花萼寬度 (cm)", float(X['sepal width (cm)'].min()), float(X['sepal width (cm)'].max()), 3.4)
+with col2:
+    petal_length = st.slider("花瓣長度 (cm)", float(X['petal length (cm)'].min()), float(X['petal length (cm)'].max()), 1.3)
+    petal_width = st.slider("花瓣寬度 (cm)", float(X['petal width (cm)'].min()), float(X['petal width (cm)'].max()), 0.2)
+
+# 整理輸入數據
+new_data = pd.DataFrame([[sepal_length, sepal_width, petal_length, petal_width]],
+                       columns=['sepal length (cm)', 'sepal width (cm)', 'petal length (cm)', 'petal width (cm)'])
+
+# 進行預測
+prediction = model.predict(new_data)
+predicted_class = target_names[prediction[0]]
+
+st.markdown("---")
+st.success(f"根據您的輸入，模型預測該花為：**{predicted_class}**")
